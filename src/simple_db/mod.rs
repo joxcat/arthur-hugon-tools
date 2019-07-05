@@ -1,7 +1,7 @@
 use std::sync::Mutex;
 use std::fs::File;
 use std::path::Path;
-use std::io::{BufReader, BufRead, BufWriter, Write, Read};
+use std::io::{Write, Read};
 use base64::{encode, decode};
 use std::collections::HashMap;
 
@@ -22,6 +22,8 @@ macro_rules! string_from_bytes {
     ($bytes:expr) => { String::from_utf8($bytes).unwrap() };
 }
 
+const DELIM: char = '@';
+
 impl<'a> SimpleDB<'a> {
     pub fn init(path: &'a str) -> Result<Self, SimpleDBError> {
         if !Path::new(path).is_file() {
@@ -30,32 +32,34 @@ impl<'a> SimpleDB<'a> {
         Ok(Self { inner: Mutex::new(SimpleDBInner { path }) })
     }
     pub fn add(&self, key: &str, val: &str) -> Result<(), SimpleDBError> {
-        let locked = self.inner.lock().unwrap();
-        let mut f = std::fs::OpenOptions::new()
-            .append(true)
-            .open(&locked.path)
-            .map_err(err!("Cannot open file"))?;
-        f.write(format!("{}|{}",
-                        encode(key.as_bytes()),
-                        encode(val.as_bytes())).as_bytes()
-        ).map_err(err!("Cannot write in the file"))?;
+        if self.get(&(*key))?.is_none() {
+            let locked = self.inner.lock().unwrap();
+            let mut f = std::fs::OpenOptions::new()
+                .append(true)
+                .open(&locked.path)
+                .map_err(err!("Cannot open file"))?;
+            f.write(format!("{}{}{}\n",
+                            encode(key.as_bytes()),
+                            DELIM,
+                            encode(val.as_bytes())).as_bytes()
+            ).map_err(err!("Cannot write in the file"))?;
+        }
         Ok(())
     }
     pub fn get(&self, key: &str) -> Result<Option<String>, SimpleDBError> {
         let locked = self.inner.lock().unwrap();
-        let f = File::open(locked.path).map_err(err!("Cannot open file"))?;
-        let file = BufReader::new(&f);
-        for line in file.lines() {
-            let l = line.map_err(err!("Error reading file"))?;
-            let (fkey, fval) = match l.split('|').collect::<Vec<&str>>()[..] {
-                [first, second] => (first, second),
-                _ => unreachable!(),
-            } as (&str, &str);
-            if string_from_bytes!(decode(fkey.as_bytes()).map_err(err!("Error reading file"))?).as_str() == key {
-                return Ok(Some(fval.to_owned()));
+        let mut f = File::open(locked.path).map_err(err!("Cannot open file"))?;
+        let mut file = String::new();
+        f.read_to_string(&mut file).map_err(err!("Cannot read file"))?;
+        let content: HashMap<String,String> = file.split('\n').map(|line: &str| {
+            //println!("{}", line);
+            match line.split(DELIM).collect::<Vec<&str>>()[..] {
+                [f, s] => Some((string_from_bytes!(decode(f).unwrap()), string_from_bytes!(decode(s).unwrap()))),
+                _ => None,
             }
-        }
-        Ok(None)
+        }).filter_map(|e| match e { Some(e) => Some(e), None => None })
+        .collect::<HashMap<String,String>>();
+        Ok(match content.get(key) { Some(x) => Some(x.clone()), None => None})
     }
     pub fn remove(&self, key: &str) -> Result<(), SimpleDBError> {
         let locked = self.inner.lock().unwrap();
@@ -64,15 +68,16 @@ impl<'a> SimpleDB<'a> {
         f.read_to_string(&mut file).map_err(err!("Cannot read file"))?;
         f.set_len(0).map_err(err!("Cannot clean file"))?;
         let mut content: HashMap<String,String> = file.split('\n').map(|line: &str| {
-            println!("{}", line);
-            match line.split('|').collect::<Vec<&str>>()[..] {
-                [f, s] => (string_from_bytes!(decode(f).unwrap()), string_from_bytes!(decode(s).unwrap())),
-                _ => unreachable!(),
+            //println!("{}", line);
+            match line.split(DELIM).collect::<Vec<&str>>()[..] {
+                [f, s] => Some((string_from_bytes!(decode(f).unwrap()), string_from_bytes!(decode(s).unwrap()))),
+                _ => None,
             }
-        }).collect::<HashMap<String,String>>();
-        content.retain(|x, _| x != &key);
+        }).filter_map(|e| match e { Some(e) => Some(e), None => None })
+        .collect::<HashMap<String,String>>();
+        content.retain(|x, _| x != key);
         for (key, val) in content {
-            f.write(format!("{}|{}\n", encode(key.as_bytes()), encode(key.as_bytes())).as_bytes());
+            f.write(format!("{}{}{}\n", encode(key.as_bytes()), DELIM, encode(val.as_bytes())).as_bytes()).map_err(err!("Cannot write to DB"))?;
         }
         Ok(())
     }
@@ -83,17 +88,18 @@ impl<'a> SimpleDB<'a> {
         f.read_to_string(&mut file).map_err(err!("Cannot read file"))?;
         f.set_len(0).map_err(err!("Cannot clean file"))?;
         let mut content: HashMap<String,String> = file.split('\n').map(|line: &str| {
-            println!("{}", line);
-            match line.split('|').collect::<Vec<&str>>()[..] {
-                [f, s] => (string_from_bytes!(decode(f).unwrap()), string_from_bytes!(decode(s).unwrap())),
-                _ => unreachable!(),
+            //println!("{}", line);
+            match line.split(DELIM).collect::<Vec<&str>>()[..] {
+                [f, s] => Some((string_from_bytes!(decode(f).unwrap()), string_from_bytes!(decode(s).unwrap()))),
+                _ => None,
             }
-        }).collect::<HashMap<String,String>>();
+        }).filter_map(|e| match e { Some(e) => Some(e), None => None })
+        .collect::<HashMap<String,String>>();
         if content.contains_key(key) {
             content.insert(key.to_owned(), new_val.to_owned());
         }
         for (key, val) in content {
-            f.write(format!("{}|{}\n", encode(key.as_bytes()), encode(key.as_bytes())).as_bytes());
+            f.write(format!("{}{}{}\n", encode(key.as_bytes()), DELIM, encode(val.as_bytes())).as_bytes()).map_err(err!("Cannot write to DB"))?;
         }
         Ok(())
     }
@@ -103,12 +109,13 @@ impl<'a> SimpleDB<'a> {
         let mut file = String::new();
         f.read_to_string(&mut file).map_err(err!("Cannot read file"))?;
         let content: HashMap<String,String> = file.split('\n').map(|line: &str| {
-            println!("{}", line);
-            match line.split('|').collect::<Vec<&str>>()[..] {
-                [f, s] => (string_from_bytes!(decode(f).unwrap()), string_from_bytes!(decode(s).unwrap())),
-                _ => unreachable!(),
+            //println!("{}", line);
+            match line.split(DELIM).collect::<Vec<&str>>()[..] {
+                [f, s] => Some((string_from_bytes!(decode(f).unwrap()), string_from_bytes!(decode(s).unwrap()))),
+                _ => None,
             }
-        }).collect::<HashMap<String,String>>();
+        }).filter_map(|e| match e { Some(e) => Some(e), None => None })
+        .collect::<HashMap<String,String>>();
         Ok(content)
     }
 }

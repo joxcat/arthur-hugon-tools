@@ -27,7 +27,7 @@ macro_rules! response_unsecure {
         }().map_err(|_| ())?
     };
 }
-#[cfg(not(feature = "security")]
+#[cfg(not(feature = "security"))]
 #[macro_export]
 macro_rules! response {
     ($code:ident, $json:expr) => {

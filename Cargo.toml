@@ -1,6 +1,6 @@
 [package]
 name = "arthur-hugon-tools"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["Arthur Hugon <dev@planchon.xyz>"]
 edition = "2018"
 
@@ -20,7 +20,7 @@ rand = { version = "0.6", optional = true }
 base64 = { version = "0.10", optional = true }
 openssl = { version = "0.10", optional = true }
 openssl-probe = { version = "0.1", optional = true }
-headless_chrome = { path = "../rust-headless-chrome", optional = true }
+headless_chrome = { git = "https://github.com/joxcat/rust-headless-chrome.git", optional = true }
 futures = { version = "0.1", optional = true }
 http = { version = "0.1", optional = true }
 actix-web = { version = "1.0", optional = true }
